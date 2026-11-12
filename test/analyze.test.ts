@@ -1,0 +1,160 @@
+import { describe, expect, it } from 'vitest';
+import { analyze } from '../src/analyze.js';
+import { InputError } from '../src/errors.js';
+import { parseResults } from '../src/results.js';
+import { csv, limits } from './helpers.js';
+
+// Lot X, hand-checked:
+// M1 passes; M2 sits exactly on the limits (pass); M3 fails P1 by 0.001 then passes on retest; M4 has no P2 row.
+const lotX = [
+  ['M1', 'X', 'S1', 'P1', '0.2'],
+  ['M1', 'X', 'S1', 'P2', '0.1'],
+  ['M2', 'X', 'S2', 'P1', '1.000'],
+  ['M2', 'X', 'S2', 'P2', '-0.5'],
+  ['M3', 'X', 'S1', 'P1', '1.001'],
+  ['M3', 'X', 'S1', 'P2', '0'],
+  ['M4', 'X', 'S2', 'P1', '0.1'],
+  ['M3', 'X', 'S2', 'P1', '0.3'],
+];
+
+describe('analyze', () => {
+  const report = analyze(parseResults(csv(lotX)), limits());
+  const lot = report.lots[0];
+
+  it('counts first-pass and final yield, retests and incomplete meters', () => {
+    expect(lot).toMatchObject({ lot: 'X', meters: 4, firstPassed: 2, finalPassed: 3, retested: 1, incomplete: 1, firstPassYieldPct: 50, finalYieldPct: 75 });
+    expect(report.totals).toEqual({ meters: 4, firstPassed: 2, finalPassed: 3, firstPassYieldPct: 50, finalYieldPct: 75 });
+    expect(report.attempts).toBe(8);
+    expect(report.belowMinimum).toBe(false);
+  });
+
+  it('treats values on the limit as a pass (exact decimal compare)', () => {
+    expect(lot.failedMeters.map((m) => m.serial)).toEqual(['M3', 'M4']);
+  });
+
+  it('lists first failures with the excess and the final state', () => {
+    const m3 = lot.failedMeters[0];
+    expect(m3.firstFailures).toEqual([{ point: 'P1', error: 1.001, excess: 0.001 }]);
+    expect(m3).toMatchObject({ firstPass: false, finalPass: true, retested: true, finalFailures: [], missingPoints: [] });
+    expect(lot.failedMeters[1]).toMatchObject({ serial: 'M4', missingPoints: ['P2'], firstPass: false, finalPass: false });
+  });
+
+  it('computes point statistics on first attempts only', () => {
+    const [p1, p2] = lot.points;
+    expect(p1).toMatchObject({ point: 'P1', lower: -1, upper: 1, n: 4, fails: 1, min: 0.1, max: 1.001 });
+    expect(p1.mean).toBeCloseTo(0.57525, 10);
+    expect(p2).toMatchObject({ point: 'P2', n: 3, fails: 0, min: -0.5, max: 0.1 });
+    expect(p2.mean).toBeCloseTo(-0.133333, 5);
+    expect(p2.stdDev).toBeCloseTo(0.321455, 5);
+    // min(0.5 - mean, mean + 0.5) / (3 sd) = 0.366667 / 0.964365
+    expect(p2.cpk).toBeCloseTo(0.380216, 5);
+  });
+
+  it('orders retests by tested_at when present, not by file order', () => {
+    const rows = parseResults(
+      csv([
+        ['M1', 'X', 'S1', 'P1', '0.2', '2026-11-10T09:00:00+08:00'],
+        ['M1', 'X', 'S1', 'P1', '1.5', '2026-11-10T08:00:00+08:00'],
+        ['M1', 'X', 'S1', 'P2', '0', '2026-11-10T08:00:00+08:00'],
+      ]),
+    );
+    const m = analyze(rows, limits()).lots[0];
+    expect(m).toMatchObject({ firstPassed: 0, finalPassed: 1, retested: 1 });
+    expect(m.failedMeters[0].firstFailures[0]).toEqual({ point: 'P1', error: 1.5, excess: 0.5 });
+  });
+
+  it('reports a meter that still fails after retest, worst point first', () => {
+    const rows = parseResults(
+      csv([
+        ['M1', 'X', 'S1', 'P1', '-1.2'],
+        ['M1', 'X', 'S1', 'P2', '0.9'],
+        ['M1', 'X', 'S1', 'P1', '-1.1'],
+      ]),
+    );
+    const m = analyze(rows, limits()).lots[0].failedMeters[0];
+    expect(m.firstFailures.map((f) => f.point)).toEqual(['P2', 'P1']);
+    expect(m.finalFailures).toEqual([
+      { point: 'P2', error: 0.9, excess: 0.4 },
+      { point: 'P1', error: -1.1, excess: expect.closeTo(0.1, 10) },
+    ]);
+    expect(m.finalPass).toBe(false);
+  });
+
+  it('gives no Cpk for one value or zero spread', () => {
+    const one = analyze(parseResults(csv([['M1', 'X', 'S1', 'P1', '0.1'], ['M1', 'X', 'S1', 'P2', '0.1']])), limits()).lots[0];
+    expect(one.points[0]).toMatchObject({ n: 1, stdDev: null, cpk: null, mean: 0.1 });
+    const flat = analyze(
+      parseResults(csv([['M1', 'X', 'S1', 'P1', '0.1'], ['M2', 'X', 'S1', 'P1', '0.1'], ['M1', 'X', 'S1', 'P2', '0'], ['M2', 'X', 'S1', 'P2', '0']])),
+      limits(),
+    ).lots[0];
+    expect(flat.points[0]).toMatchObject({ n: 2, stdDev: 0, cpk: null });
+  });
+
+  it('flags a station whose mean is off from the other stations', () => {
+    const rows = parseResults(
+      csv([
+        ['A1', 'X', 'S1', 'P1', '0.5'],
+        ['A2', 'X', 'S1', 'P1', '0.5'],
+        ['B1', 'X', 'S2', 'P1', '0'],
+        ['B2', 'X', 'S2', 'P1', '0'],
+        ['A1', 'X', 'S1', 'P2', '0'],
+        ['A2', 'X', 'S1', 'P2', '0.05'],
+        ['B1', 'X', 'S2', 'P2', '0'],
+        ['B2', 'X', 'S2', 'P2', '0.05'],
+      ]),
+    );
+    const l = analyze(rows, limits()).lots[0];
+    expect(l.stations).toEqual(['S1', 'S2']);
+    const p1 = l.stationBias.filter((b) => b.point === 'P1');
+    expect(p1).toEqual([
+      { station: 'S1', point: 'P1', n: 2, mean: 0.5, bias: 0.5, biasOfHalfTolerance: 0.5, flagged: true },
+      { station: 'S2', point: 'P1', n: 2, mean: 0, bias: -0.5, biasOfHalfTolerance: 0.5, flagged: true },
+    ]);
+    expect(l.stationBias.filter((b) => b.point === 'P2').every((b) => !b.flagged && b.bias === 0)).toBe(true);
+    // Raising the threshold clears the flag.
+    expect(analyze(rows, limits(), { biasFlag: 0.6 }).lots[0].stationBias.some((b) => b.flagged)).toBe(false);
+  });
+
+  it('has no station bias with a single station', () => {
+    const l = analyze(parseResults(csv([['M1', 'X', 'S1', 'P1', '0'], ['M2', 'X', 'S1', 'P1', '0.9']])), limits()).lots[0];
+    expect(l.stationBias).toEqual([]);
+  });
+
+  it('splits lots, sorts them and checks the minimum per lot', () => {
+    const rows = parseResults(
+      csv([
+        ['B1', 'LB', 'S1', 'P1', '0'],
+        ['B1', 'LB', 'S1', 'P2', '0'],
+        ['A1', 'LA', 'S1', 'P1', '2'],
+        ['A1', 'LA', 'S1', 'P2', '0'],
+        ['A2', 'LA', 'S1', 'P1', '0'],
+        ['A2', 'LA', 'S1', 'P2', '0'],
+      ]),
+    );
+    const r = analyze(rows, limits(), { minFirstPassYieldPct: 60 });
+    expect(r.lots.map((l) => [l.lot, l.firstPassYieldPct, l.belowMinimum])).toEqual([
+      ['LA', 50, true],
+      ['LB', 100, false],
+    ]);
+    expect(r.belowMinimum).toBe(true);
+    expect(r.minFirstPassYieldPct).toBe(60);
+    expect(r.totals.firstPassYieldPct).toBeCloseTo(66.6667, 3);
+  });
+
+  it('uses the profile minimum unless the option overrides it', () => {
+    const l = { ...limits(), minFirstPassYieldPct: 90 };
+    const rows = parseResults(csv(lotX));
+    expect(analyze(rows, l).belowMinimum).toBe(true);
+    expect(analyze(rows, l, { minFirstPassYieldPct: 40 }).belowMinimum).toBe(false);
+  });
+
+  it('rejects unknown points, a meter in two lots and a bad bias flag', () => {
+    expect(() => analyze(parseResults(csv([['M1', 'X', 'S1', 'P9', '0']])), limits())).toThrow('point "P9" is not in the limits profile');
+    expect(() => analyze(parseResults(csv([['M1', 'X', 'S1', 'P1', '0'], ['M1', 'Y', 'S1', 'P2', '0']])), limits())).toThrow(
+      'line 3: meter M1 appears in lot X and lot Y',
+    );
+    for (const biasFlag of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => analyze(parseResults(csv(lotX)), limits(), { biasFlag })).toThrow(InputError);
+    }
+  });
+});
