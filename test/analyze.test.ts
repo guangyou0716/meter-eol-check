@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze } from '../src/analyze.js';
 import { InputError } from '../src/errors.js';
-import { parseResults } from '../src/results.js';
+import { parseResultFiles, parseResults } from '../src/results.js';
 import { csv, limits } from './helpers.js';
 
 // Lot X, hand-checked:
@@ -157,4 +157,44 @@ describe('analyze', () => {
       expect(() => analyze(parseResults(csv(lotX)), limits(), { biasFlag })).toThrow(InputError);
     }
   });
+
+  it('reports first-pass yield per station by the station of each meter\'s earliest first attempt', () => {
+    // M3 was retested on S2 but first ran on S1, so it counts at S1.
+    expect(lot.stationYield).toEqual([
+      { station: 'S1', meters: 2, firstPassed: 1, firstPassYieldPct: 50 },
+      { station: 'S2', meters: 2, firstPassed: 1, firstPassYieldPct: 50 },
+    ]);
+  });
+
+  it('leaves station yield empty for a single station', () => {
+    const one = analyze(parseResults(csv([['M1', 'Y', 'S1', 'P1', '0'], ['M1', 'Y', 'S1', 'P2', '0']])), limits());
+    expect(one.lots[0].stationYield).toEqual([]);
+  });
+
+  it('orders retests across files by file order when there is no tested_at', () => {
+    const fail = { name: 'a.csv', text: csv([['M1', 'Z', 'S1', 'P1', '1.5'], ['M1', 'Z', 'S1', 'P2', '0']]) };
+    const pass = { name: 'b.csv', text: csv([['M1', 'Z', 'S2', 'P1', '0.5']]) };
+    const forward = analyze(parseResultFiles([fail, pass]), limits()).lots[0];
+    expect(forward).toMatchObject({ firstPassed: 0, finalPassed: 1, retested: 1 });
+    expect(forward.stationYield).toEqual([
+      { station: 'S1', meters: 1, firstPassed: 0, firstPassYieldPct: 0 },
+    ]);
+    const backward = analyze(parseResultFiles([pass, fail]), limits()).lots[0];
+    expect(backward).toMatchObject({ firstPassed: 1, finalPassed: 0 });
+  });
+
+  it('orders retests across files by tested_at when every file has it', () => {
+    const late = { name: 'a.csv', text: csv([['M1', 'Z', 'S1', 'P1', '1.5', '2026-11-10T09:00:00Z'], ['M1', 'Z', 'S1', 'P2', '0', '2026-11-10T09:00:00Z']]) };
+    const early = { name: 'b.csv', text: csv([['M1', 'Z', 'S2', 'P1', '0.5', '2026-11-10T08:00:00Z']]) };
+    const lotZ = analyze(parseResultFiles([late, early]), limits()).lots[0];
+    expect(lotZ).toMatchObject({ firstPassed: 1, finalPassed: 0 });
+    expect(lotZ.stationYield.map((y) => y.station)).toEqual(['S2']);
+  });
+
+  it('names the file when a point or lot problem is in a second file', () => {
+    const a = { name: 'a.csv', text: csv([['M1', 'Z', 'S1', 'P1', '0']]) };
+    const b = { name: 'b.csv', text: csv([['M1', 'W', 'S1', 'P2', '0']]) };
+    expect(() => analyze(parseResultFiles([a, b]), limits())).toThrow('Results CSV b.csv line 2: meter M1 appears in lot Z and lot W.');
+  });
 });
+
