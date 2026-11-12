@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { InputError } from '../src/errors.js';
-import { parseResults } from '../src/results.js';
+import { parseResultFiles, parseResults } from '../src/results.js';
 import { csv } from './helpers.js';
 
 describe('parseResults', () => {
@@ -38,3 +38,38 @@ describe('parseResults', () => {
     expect(() => parseResults(text)).toThrow(message);
   });
 });
+
+describe('parseResultFiles', () => {
+  const a = { name: 'a.csv', text: csv([['M1', 'L1', 'S1', 'P1', '0.1'], ['M1', 'L1', 'S1', 'P2', '0.2']]) };
+  const b = { name: 'b.csv', text: csv([['M2', 'L1', 'S1', 'P1', '0.3']]) };
+
+  it('joins files in order with a running position and the file name', () => {
+    const rows = parseResultFiles([a, b]);
+    expect(rows.map((r) => [r.file, r.line, r.seq])).toEqual([
+      ['a.csv', 2, 0],
+      ['a.csv', 3, 1],
+      ['b.csv', 2, 2],
+    ]);
+  });
+
+  it('leaves the file name off for a single file, so messages match parseResults', () => {
+    const rows = parseResultFiles([a]);
+    expect(rows[0].file).toBeUndefined();
+    expect(rows[1].seq).toBe(1);
+    expect(() => parseResultFiles([{ name: 'x.csv', text: 'serial,lot\n' }])).toThrow('Results CSV: missing column(s)');
+  });
+
+  it.each([
+    [[], 'at least one results CSV'],
+    [[a, a], 'Results CSV a.csv is given twice'],
+    [[a, { name: 'c.csv', text: csv([['M3', 'L1', 'S1', 'P1', '0', '2026-11-10T08:00:00Z']]) }], 'tested_at must be filled in every file or in none'],
+    [[a, { name: 'd.csv', text: 'serial,lot,station,point,error_pct\nM3,L1,S1,P1,x\n' }], 'Results CSV d.csv line 2: error_pct'],
+    [[a, { name: 'e.csv', text: 'serial,lot,station,point\nM3,L1,S1,P1\n' }], 'Results CSV e.csv: missing column(s) error_pct'],
+    [[a, { name: 'f.csv', text: 'serial,lot,station,point,error_pct\nM3,L"1,S1,P1,0\n' }], 'f.csv: CSV line 2'],
+    [[a, { name: 'g.csv', text: '' }], 'Results CSV g.csv is empty'],
+  ])('rejects bad sets %#', (files, message) => {
+    expect(() => parseResultFiles(files)).toThrow(InputError);
+    expect(() => parseResultFiles(files)).toThrow(message);
+  });
+});
+

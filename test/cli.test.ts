@@ -70,8 +70,8 @@ describe('cli', () => {
 
   it.each([
     [[results], '--limits <limits.json> is required'],
-    [['--limits', limitsFile], 'exactly one results CSV'],
-    [[results, results, '--limits', limitsFile], 'exactly one results CSV'],
+    [['--limits', limitsFile], 'at least one results CSV'],
+    [[results, results, '--limits', limitsFile], 'is given twice'],
     [[results, '--limits', limitsFile, '--json', '--md'], 'either --json or --md'],
     [[results, '--limits', limitsFile, '--min-fpy', '101'], '--min-fpy must be from 0 to 100'],
     [[results, '--limits', limitsFile, '--min-fpy', 'abc'], '--min-fpy must be a number'],
@@ -98,5 +98,47 @@ describe('cli', () => {
     const io = capture();
     expect(main([file, '--limits', limitsFile, '--lot', 'A'])).toBe(2);
     expect(io.err()).toContain('point "Typo" is not in the limits profile');
+  });
+
+  it('reads several results files as one set (same report as one combined file)', () => {
+    const header = 'serial,lot,station,point,error_pct';
+    const day1 = ['M1,A,S1,P1,0.1', 'M1,A,S1,P2,0.1', 'M2,A,S2,P1,1.2', 'M2,A,S2,P2,0'];
+    const day2 = ['M2,A,S1,P1,0.4', 'M3,A,S2,P1,-0.2', 'M3,A,S2,P2,0.6'];
+    const limits = tmp('limits.json', JSON.stringify({ name: 'plan', points: { P1: { lower: -1, upper: 1 }, P2: { lower: -0.5, upper: 0.5 } } }));
+    const one = tmp('all.csv', [header, ...day1, ...day2].join('\n'));
+    const a = tmp('day1.csv', [header, ...day1].join('\n'));
+    const b = tmp('day2.csv', [header, ...day2].join('\n'));
+    const io = capture();
+    main([one, '--limits', limits, '--json']);
+    const combined = JSON.parse(io.out());
+    vi.restoreAllMocks();
+    const io2 = capture();
+    main([a, b, '--limits', limits, '--json']);
+    const split = JSON.parse(io2.out());
+    expect(split).toEqual(combined);
+    expect(split.lots[0]).toMatchObject({ meters: 3, firstPassed: 1, finalPassed: 2, retested: 1 });
+    expect(split.lots[0].stationYield).toEqual([
+      { station: 'S1', meters: 1, firstPassed: 1, firstPassYieldPct: 100 },
+      { station: 'S2', meters: 2, firstPassed: 0, firstPassYieldPct: 0 },
+    ]);
+  });
+
+  it('names the file in errors when several results files are given', () => {
+    const a = tmp('good.csv', 'serial,lot,station,point,error_pct\nM1,A,S1,P1,0.1\n');
+    const b = tmp('bad.csv', 'serial,lot,station,point,error_pct\nM2,A,S1,P1,abc\n');
+    const io = capture();
+    expect(main([a, b, '--limits', limitsFile])).toBe(2);
+    expect(io.err()).toContain(`Results CSV ${b} line 2: error_pct`);
+  });
+
+  it('prints the station first-pass yield in text and Markdown', () => {
+    const io = capture();
+    main([results, '--limits', limitsFile]);
+    expect(io.out()).toContain('Station first-pass yield: EOL-1 100.0% (8/8), EOL-2 100.0% (8/8), EOL-3 75.0% (6/8)');
+    vi.restoreAllMocks();
+    const io2 = capture();
+    main([results, '--limits', limitsFile, '--md']);
+    expect(io2.out()).toContain('| Station | Meters | First passed | First-pass yield |');
+    expect(io2.out()).toContain('| EOL-3 | 8 | 6 | 75.0% |');
   });
 });

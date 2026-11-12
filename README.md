@@ -22,6 +22,9 @@ KF1001,L2611-A,EOL-2,Iref-PF1,0.083,2026-11-10T08:00:04+08:00
   local times). First pass uses each point's first attempt, final yield the last attempt.
 - A meter missing any point of the profile counts as **incomplete** and fails both yields.
 - A meter in two lots, or a point the profile does not list, is an input error (catches typos).
+- **Several files** (one per shift, day or bench) can be given; they are read as one set in the order given.
+  Without `tested_at`, a retest in a later file counts as later. `tested_at` must be in every file or in none, and
+  the same file twice is rejected (its rows would look like retests). Errors name the file.
 
 **Limits profile JSON** (yours):
 
@@ -46,6 +49,7 @@ npm ci && npm run build
 node dist/cli.js examples/results-example.csv --limits examples/limits-example.json
 node dist/cli.js results.csv --limits plan.json --lot L2611-A --md > L2611-A.md
 node dist/cli.js results.csv --limits plan.json --json | jq '.lots[].firstPassYieldPct'
+node dist/cli.js shift1.csv shift2.csv shift3.csv --limits plan.json   # several files as one set
 ```
 
 Options: `--lot <id>`, `--min-fpy <percent>` (overrides the profile), `--bias-flag <fraction>` (default 0.25),
@@ -60,6 +64,7 @@ Lot L2611-A: 24 meters, first-pass yield 91.7% (22/24) BELOW minimum 92%, final 
   Point (first attempts)      limits            n     mean    sd     min     max    Cpk  fails
   Imin-PF1                   -1.500..+1.500     24  +0.073  0.481  -1.620  +1.002   0.99     1
   ...
+  Station first-pass yield: EOL-1 100.0% (8/8), EOL-2 100.0% (8/8), EOL-3 75.0% (6/8)
   Stations: EOL-1, EOL-2, EOL-3; 1 bias flag(s) over 25% of half tolerance
     EOL-3 @ Itr-PF1: bias -0.254% vs other stations (25.4% of half tolerance, n=8)
   Failed first pass (2):
@@ -74,6 +79,8 @@ Lot L2611-A: 24 meters, first-pass yield 91.7% (22/24) BELOW minimum 92%, final 
 - **Point statistics** (first attempts, i.e. the process before retest): n, mean, sample standard deviation, min,
   max, fails and `Cpk = min(upper - mean, mean - lower) / (3 sd)` (n/a for n < 2 or zero spread). Cpk uses the
   overall sample sd (strictly that is Ppk-style; there is no subgrouping).
+- **Station first-pass yield**: each meter counted once, at the station of its earliest first attempt (so a retest
+  on another station does not move it). Shown when the lot has at least two stations.
 - **Station bias**: per point, a station's mean minus the mean of all other stations' first attempts, flagged when
   its size exceeds `--bias-flag` x half the tolerance band. Needs at least two stations in the lot.
 

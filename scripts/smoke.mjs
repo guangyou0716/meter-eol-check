@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // End-to-end check of the built CLI (dist/cli.js), run directly and through a symlink like an npm bin.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,3 +50,17 @@ if (bad.status !== 2 || !bad.stderr.includes('not valid JSON')) {
   fail(`bad limits: status ${bad.status} ${bad.stderr}`);
 }
 console.log('smoke: ok bad limits file -> exit 2');
+
+// The example split into two files (first half, second half) must give the same report as the whole file.
+const [head, ...body] = readFileSync(example('results-example.csv'), 'utf8').trimEnd().split('\n');
+const half = Math.floor(body.length / 2);
+const part1 = join(dir, 'part1.csv');
+const part2 = join(dir, 'part2.csv');
+writeFileSync(part1, `${[head, ...body.slice(0, half)].join('\n')}\n`);
+writeFileSync(part2, `${[head, ...body.slice(half)].join('\n')}\n`);
+const whole = run(cli, [example('results-example.csv'), '--limits', example('limits-example.json'), '--json']);
+const split = run(cli, [part1, part2, '--limits', example('limits-example.json'), '--json']);
+if (split.status !== 1 || split.stdout !== whole.stdout || !JSON.parse(split.stdout).lots[0].stationYield?.length) {
+  fail(`split files: status ${split.status} ${split.stderr}`);
+}
+console.log('smoke: ok example split into two files -> identical report incl. station yield');

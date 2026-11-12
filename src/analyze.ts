@@ -1,7 +1,7 @@
 import { toNumber } from './decimal.js';
 import { InputError } from './errors.js';
 import type { Limits, PointLimit } from './limits.js';
-import type { Attempt } from './results.js';
+import { where, type Attempt } from './results.js';
 
 export interface AnalyzeOptions {
   /** Flag a station when |bias| exceeds this fraction of half the tolerance band (default 0.25). */
@@ -37,6 +37,14 @@ export interface StationBias {
   flagged: boolean;
 }
 
+export interface StationYield {
+  station: string;
+  /** Meters whose earliest first attempt ran on this station. */
+  meters: number;
+  firstPassed: number;
+  firstPassYieldPct: number;
+}
+
 export interface FailedPoint {
   point: string;
   error: number;
@@ -69,6 +77,8 @@ export interface LotReport {
   points: PointStats[];
   stations: string[];
   stationBias: StationBias[];
+  /** First-pass yield per station (each meter counted at the station of its earliest first attempt); empty for one station. */
+  stationYield: StationYield[];
   /** Meters that failed first pass or are incomplete. */
   failedMeters: MeterResult[];
 }
@@ -113,8 +123,8 @@ function stats(limit: PointLimit, firsts: Attempt[]): PointStats {
   return { ...base, mean, stdDev, min: values.reduce((m, v) => Math.min(m, v)), max: values.reduce((m, v) => Math.max(m, v)), cpk, fails };
 }
 
-/** Orders a meter's attempts at one point: by tested_at when present, else by CSV line. */
-const chronological = (a: Attempt, b: Attempt) => (a.testedAtMs ?? 0) - (b.testedAtMs ?? 0) || a.line - b.line;
+/** Orders attempts: by tested_at when present, else by position in the input (file order, then CSV line). */
+const chronological = (a: Attempt, b: Attempt) => (a.testedAtMs ?? 0) - (b.testedAtMs ?? 0) || (a.seq ?? a.line) - (b.seq ?? b.line);
 
 function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: number, minFpy: number | undefined): LotReport {
   // serial -> point -> attempts in order
@@ -132,7 +142,9 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
 
   const firstsByPoint = new Map<string, Attempt[]>(limits.points.map((p) => [p.point, []]));
   const results: MeterResult[] = [];
+  const stationOf = new Map<MeterResult, string>();
   for (const [serial, points] of meters) {
+    let earliest: Attempt | undefined;
     const missingPoints: string[] = [];
     const firstFailures: FailedPoint[] = [];
     const finalFailures: FailedPoint[] = [];
@@ -146,6 +158,9 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
       list.sort(chronological);
       retested ||= list.length > 1;
       firstsByPoint.get(limit.point)!.push(list[0]);
+      if (earliest === undefined || chronological(list[0], earliest) < 0) {
+        earliest = list[0];
+      }
       const first = failure(limit, list[0]);
       if (first) {
         firstFailures.push(first);
@@ -156,7 +171,7 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
       }
     }
     const complete = missingPoints.length === 0;
-    results.push({
+    const result: MeterResult = {
       serial,
       firstPass: complete && firstFailures.length === 0,
       finalPass: complete && finalFailures.length === 0,
@@ -164,7 +179,11 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
       missingPoints,
       firstFailures: firstFailures.sort(byWorst),
       finalFailures: finalFailures.sort(byWorst),
-    });
+    };
+    results.push(result);
+    if (earliest !== undefined) {
+      stationOf.set(result, earliest.station);
+    }
   }
 
   const stations = [...new Set(attempts.map((a) => a.station))].sort();
@@ -187,6 +206,18 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
     }
   }
 
+  const stationYield: StationYield[] = [];
+  if (stations.length > 1) {
+    for (const station of stations) {
+      const here = results.filter((m) => stationOf.get(m) === station);
+      if (here.length === 0) {
+        continue;
+      }
+      const passed = here.filter((m) => m.firstPass).length;
+      stationYield.push({ station, meters: here.length, firstPassed: passed, firstPassYieldPct: pct(passed, here.length) });
+    }
+  }
+
   const firstPassed = results.filter((m) => m.firstPass).length;
   const finalPassed = results.filter((m) => m.finalPass).length;
   const firstPassYieldPct = pct(firstPassed, results.length);
@@ -203,6 +234,7 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
     points: limits.points.map((p) => stats(p, firstsByPoint.get(p.point)!)),
     stations,
     stationBias,
+    stationYield,
     failedMeters: results.filter((m) => !m.firstPass).sort((a, b) => a.serial.localeCompare(b.serial)),
   };
 }
@@ -219,11 +251,11 @@ export function analyze(attempts: Attempt[], limits: Limits, options: AnalyzeOpt
   const lots = new Map<string, Attempt[]>();
   for (const a of attempts) {
     if (!known.has(a.point)) {
-      throw new InputError(`Results CSV line ${a.line}: point "${a.point}" is not in the limits profile "${limits.name}" (known: ${[...known].join(', ')}).`);
+      throw new InputError(`${where(a)}: point "${a.point}" is not in the limits profile "${limits.name}" (known: ${[...known].join(', ')}).`);
     }
     const seen = lotOf.get(a.serial);
     if (seen !== undefined && seen !== a.lot) {
-      throw new InputError(`Results CSV line ${a.line}: meter ${a.serial} appears in lot ${seen} and lot ${a.lot}.`);
+      throw new InputError(`${where(a)}: meter ${a.serial} appears in lot ${seen} and lot ${a.lot}.`);
     }
     lotOf.set(a.serial, a.lot);
     const list = lots.get(a.lot) ?? [];

@@ -37,6 +37,9 @@ export function textReport(report: Report): string {
       );
     }
     const flagged = l.stationBias.filter((b) => b.flagged);
+    if (l.stationYield.length > 0) {
+      out.push(`  Station first-pass yield: ${l.stationYield.map((s) => `${s.station} ${yieldText(s.firstPassYieldPct)} (${s.firstPassed}/${s.meters})`).join(', ')}`);
+    }
     if (l.stations.length > 1) {
       out.push(`  Stations: ${l.stations.join(', ')}; ${flagged.length} bias flag(s) over ${Math.round(report.biasFlag * 100)}% of half tolerance`);
       for (const b of flagged) {
@@ -68,6 +71,12 @@ export function markdownReport(report: Report): string {
         `| ${p.point} | ${err(p.lower)}..${err(p.upper)} | ${p.n} | ${opt(p.mean, err)} | ${opt(p.stdDev, (v) => v.toFixed(3))} | ${opt(p.min, err)} | ${opt(p.max, err)} | ${opt(p.cpk, cpk)} | ${p.fails} |`,
       );
     }
+    if (l.stationYield.length > 0) {
+      out.push('', '| Station | Meters | First passed | First-pass yield |', '|---|--:|--:|--:|');
+      for (const s of l.stationYield) {
+        out.push(`| ${s.station} | ${s.meters} | ${s.firstPassed} | ${yieldText(s.firstPassYieldPct)} |`);
+      }
+    }
     const flagged = l.stationBias.filter((b) => b.flagged);
     if (flagged.length > 0) {
       out.push('', `Station bias flags (over ${Math.round(report.biasFlag * 100)}% of half tolerance):`, '');
@@ -97,6 +106,7 @@ export function jsonReport(report: Report): string {
       firstPassYieldPct: round(l.firstPassYieldPct, 2),
       finalYieldPct: round(l.finalYieldPct, 2),
       points: l.points.map((p) => ({ ...p, mean: round(p.mean, 6), stdDev: round(p.stdDev, 6), min: round(p.min, 6), max: round(p.max, 6), cpk: round(p.cpk, 3) })),
+      stationYield: l.stationYield.map((s) => ({ ...s, firstPassYieldPct: round(s.firstPassYieldPct, 2) })),
       stationBias: l.stationBias.map((b) => ({ ...b, mean: round(b.mean, 6), bias: round(b.bias, 6), biasOfHalfTolerance: round(b.biasOfHalfTolerance, 4) })),
     })),
   };

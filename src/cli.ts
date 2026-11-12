@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { analyze } from './analyze.js';
 import { InputError } from './errors.js';
 import { parseLimits } from './limits.js';
 import { jsonReport, markdownReport, textReport } from './report.js';
-import { parseResults } from './results.js';
+import { parseResultFiles } from './results.js';
 
-const USAGE = `Usage: meter-eol-check <results.csv> --limits <limits.json> [options]
+const USAGE = `Usage: meter-eol-check <results.csv> [more.csv ...] --limits <limits.json> [options]
 
 Lot report for smart-meter end-of-line accuracy tests: first-pass and final yield, per-point statistics and Cpk
-(first attempts), station bias and the meters that failed. Offline; reads two local files.
+(first attempts), station yield and bias, and the meters that failed. Offline; reads local files only.
 
 results.csv columns: serial,lot,station,point,error_pct[,tested_at]. One row per meter, test point and attempt;
-a repeated serial+point is a retest (ordered by tested_at when given, else by file order).
+a repeated serial+point is a retest (ordered by tested_at when given, else by file order). Several results files
+(for example one per shift or bench) are read as one set, in the order given.
 
 limits.json: { "name": "...", "points": { "<point>": { "lower": -1.0, "upper": 1.0 } }, "minFirstPassYieldPct": 98 }
 You supply the limits for your meter class and test plan; the tool ships no standard limit tables.
@@ -70,8 +72,15 @@ export function main(argv: string[]): number {
       process.stdout.write(USAGE);
       return 0;
     }
-    if (positionals.length !== 1) {
-      throw new InputError('Give exactly one results CSV.');
+    if (positionals.length === 0) {
+      throw new InputError('Give at least one results CSV.');
+    }
+    const seen = new Set<string>();
+    for (const path of positionals) {
+      if (seen.has(resolve(path))) {
+        throw new InputError(`Results CSV ${path} is given twice (its rows would count as retests).`);
+      }
+      seen.add(resolve(path));
     }
     if (!values.limits) {
       throw new InputError('--limits <limits.json> is required.');
@@ -94,7 +103,7 @@ export function main(argv: string[]): number {
       throw new InputError(`Limits file ${values.limits} is not valid JSON: ${(e as Error).message}`);
     }
     const limits = parseLimits(json);
-    let attempts = parseResults(read(positionals[0], 'results CSV'));
+    let attempts = parseResultFiles(positionals.map((path) => ({ name: path, text: read(path, 'results CSV') })));
     if (values.lot !== undefined) {
       const lot = values.lot;
       // Check points and lot membership on the whole file first, so a typo elsewhere is not hidden.
