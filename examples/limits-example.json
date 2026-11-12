@@ -1,0 +1,11 @@
+{
+  "name": "EXAMPLE single-phase class 1 plan (example values, replace with your own spec)",
+  "points": {
+    "Imin-PF1": { "lower": -1.5, "upper": 1.5 },
+    "Itr-PF1": { "lower": -1.0, "upper": 1.0 },
+    "Iref-PF1": { "lower": -1.0, "upper": 1.0 },
+    "Iref-PF0.5L": { "lower": -1.0, "upper": 1.0 },
+    "Imax-PF1": { "lower": -1.0, "upper": 1.0 }
+  },
+  "minFirstPassYieldPct": 92
+}
