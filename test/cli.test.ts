@@ -51,6 +51,9 @@ describe('cli', () => {
     expect(data.totals).toEqual({ meters: 40, firstPassed: 37, finalPassed: 38, firstPassYieldPct: 92.5, finalYieldPct: 95 });
     expect(data.lots[0].firstPassYieldPct).toBe(91.67);
     expect(data.lots[0].points[0].point).toBe('Imin-PF1');
+    expect(data.lots[0].stationCpk).toHaveLength(15);
+    expect(data.lots[0].stationCpk[2]).toEqual({ station: 'EOL-3', point: 'Imin-PF1', n: 8, mean: expect.any(Number), stdDev: expect.any(Number), cpk: expect.any(Number) });
+    expect(String(data.lots[0].stationCpk[2].cpk).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(3);
     expect(data.belowMinimum).toBe(true);
   });
 
@@ -135,10 +138,13 @@ describe('cli', () => {
     const io = capture();
     main([results, '--limits', limitsFile]);
     expect(io.out()).toContain('Station first-pass yield: EOL-1 100.0% (8/8), EOL-2 100.0% (8/8), EOL-3 75.0% (6/8)');
+    expect(io.out()).toContain('  Station Cpk (first attempts):\n    Imin-PF1                 EOL-1 2.27 (n=8), EOL-2 2.03 (n=8), EOL-3 0.55 (n=8)');
     vi.restoreAllMocks();
     const io2 = capture();
     main([results, '--limits', limitsFile, '--md']);
     expect(io2.out()).toContain('| Station | Meters | First passed | First-pass yield |');
+    expect(io2.out()).toContain('| Point | Station | n | Mean % | SD | Cpk |');
+    expect(io2.out()).toContain('| Imin-PF1 | EOL-3 | 8 | +0.195 | 0.791 | 0.55 |');
     expect(io2.out()).toContain('| EOL-3 | 8 | 6 | 75.0% |');
   });
 });

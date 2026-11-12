@@ -1,5 +1,5 @@
 export { analyze } from './analyze.js';
-export type { AnalyzeOptions, FailedPoint, LotReport, MeterResult, PointStats, Report, StationBias, StationYield } from './analyze.js';
+export type { AnalyzeOptions, FailedPoint, LotReport, MeterResult, PointStats, Report, StationBias, StationCpk, StationYield } from './analyze.js';
 export { InputError } from './errors.js';
 export { parseLimits } from './limits.js';
 export type { Limits, PointLimit } from './limits.js';

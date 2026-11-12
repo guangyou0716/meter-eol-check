@@ -115,6 +115,45 @@ describe('analyze', () => {
     expect(analyze(rows, limits(), { biasFlag: 0.6 }).lots[0].stationBias.some((b) => b.flagged)).toBe(false);
   });
 
+  it('computes Cpk per point per station from first attempts only', () => {
+    const rows = parseResults(
+      csv([
+        ['A1', 'X', 'S1', 'P1', '0.2', '2026-11-01T08:00:00Z'],
+        ['A2', 'X', 'S1', 'P1', '0.4', '2026-11-01T08:01:00Z'],
+        ['B1', 'X', 'S2', 'P1', '0', '2026-11-01T08:02:00Z'],
+        ['B2', 'X', 'S2', 'P1', '0.9', '2026-11-01T08:03:00Z'],
+        // retest of B2 at P1 on S1: ignored for capability (first attempts only)
+        ['B2', 'X', 'S1', 'P1', '-0.9', '2026-11-01T09:00:00Z'],
+        ['A1', 'X', 'S1', 'P2', '0.1', '2026-11-01T08:00:00Z'],
+        ['B1', 'X', 'S2', 'P2', '0', '2026-11-01T08:02:00Z'],
+        ['B2', 'X', 'S2', 'P2', '0', '2026-11-01T08:03:00Z'],
+      ]),
+    );
+    const l = analyze(rows, limits()).lots[0];
+    const s1p1 = l.stationCpk.find((c) => c.station === 'S1' && c.point === 'P1')!;
+    // mean 0.3, sd = sqrt(0.02) ~ 0.141421, Cpk = (1 - 0.3) / (3 sd) ~ 1.6499
+    expect(s1p1.n).toBe(2);
+    expect(s1p1.mean).toBeCloseTo(0.3, 12);
+    expect(s1p1.stdDev).toBeCloseTo(Math.sqrt(0.02), 12);
+    expect(s1p1.cpk).toBeCloseTo(0.7 / (3 * Math.sqrt(0.02)), 12);
+    const s2p1 = l.stationCpk.find((c) => c.station === 'S2' && c.point === 'P1')!;
+    expect(s2p1.n).toBe(2);
+    expect(s2p1.cpk).toBeCloseTo(0.55 / (3 * Math.sqrt(0.405)), 12);
+    // n = 1 -> no sd/Cpk; zero spread -> no Cpk
+    expect(l.stationCpk.find((c) => c.station === 'S1' && c.point === 'P2')).toEqual({ station: 'S1', point: 'P2', n: 1, mean: 0.1, stdDev: null, cpk: null });
+    expect(l.stationCpk.find((c) => c.station === 'S2' && c.point === 'P2')).toMatchObject({ n: 2, stdDev: 0, cpk: null });
+    // order: profile point order, then station
+    expect(l.stationCpk.map((c) => `${c.point}/${c.station}`)).toEqual(['P1/S1', 'P1/S2', 'P2/S1', 'P2/S2']);
+  });
+
+  it('skips a station with no first attempts at a point and has no station Cpk for one station', () => {
+    const rows = parseResults(csv([['A1', 'X', 'S1', 'P1', '0'], ['A2', 'X', 'S1', 'P1', '0.2'], ['B1', 'X', 'S2', 'P2', '0']]));
+    const l = analyze(rows, limits()).lots[0];
+    expect(l.stationCpk.map((c) => `${c.point}/${c.station}`)).toEqual(['P1/S1', 'P2/S2']);
+    const one = analyze(parseResults(csv([['M1', 'X', 'S1', 'P1', '0'], ['M2', 'X', 'S1', 'P1', '0.9']])), limits()).lots[0];
+    expect(one.stationCpk).toEqual([]);
+  });
+
   it('has no station bias with a single station', () => {
     const l = analyze(parseResults(csv([['M1', 'X', 'S1', 'P1', '0'], ['M2', 'X', 'S1', 'P1', '0.9']])), limits()).lots[0];
     expect(l.stationBias).toEqual([]);

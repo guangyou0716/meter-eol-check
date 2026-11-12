@@ -65,6 +65,9 @@ Lot L2611-A: 24 meters, first-pass yield 91.7% (22/24) BELOW minimum 92%, final 
   Imin-PF1                   -1.500..+1.500     24  +0.073  0.481  -1.620  +1.002   0.99     1
   ...
   Station first-pass yield: EOL-1 100.0% (8/8), EOL-2 100.0% (8/8), EOL-3 75.0% (6/8)
+  Station Cpk (first attempts):
+    Imin-PF1                 EOL-1 2.27 (n=8), EOL-2 2.03 (n=8), EOL-3 0.55 (n=8)
+    ...
   Stations: EOL-1, EOL-2, EOL-3; 1 bias flag(s) over 25% of half tolerance
     EOL-3 @ Itr-PF1: bias -0.254% vs other stations (25.4% of half tolerance, n=8)
   Failed first pass (2):
@@ -81,6 +84,9 @@ Lot L2611-A: 24 meters, first-pass yield 91.7% (22/24) BELOW minimum 92%, final 
   overall sample sd (strictly that is Ppk-style; there is no subgrouping).
 - **Station first-pass yield**: each meter counted once, at the station of its earliest first attempt (so a retest
   on another station does not move it). Shown when the lot has at least two stations.
+- **Station Cpk**: the same Cpk formula per point and station, from that station's first attempts only, so a
+  station that is noisy (not just offset) shows up. Small n per station makes Cpk unstable; read it with the n shown.
+  Shown when the lot has at least two stations.
 - **Station bias**: per point, a station's mean minus the mean of all other stations' first attempts, flagged when
   its size exceeds `--bias-flag` x half the tolerance band. Needs at least two stations in the lot.
 
@@ -98,7 +104,8 @@ CI runs all of them on Node 20 and 22.
 
 ## Not in v0.1
 
-Standard limit tables, test-bench vendor file formats (need real samples), SPC charts, subgrouped Cpk.
+Standard limit tables, test-bench vendor file formats (need real samples), SPC charts, Cpk from rational subgroups
+(within-subgroup sigma); station Cpk above still uses each station's overall sample sd.
 
 ## License
 
