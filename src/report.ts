@@ -40,6 +40,15 @@ export function textReport(report: Report): string {
     if (l.stationYield.length > 0) {
       out.push(`  Station first-pass yield: ${l.stationYield.map((s) => `${s.station} ${yieldText(s.firstPassYieldPct)} (${s.firstPassed}/${s.meters})`).join(', ')}`);
     }
+    if (l.stationCpk.length > 0) {
+      out.push('  Station Cpk (first attempts):');
+      for (const p of l.points) {
+        const row = l.stationCpk.filter((c) => c.point === p.point);
+        if (row.length > 0) {
+          out.push(`    ${p.point.padEnd(24)} ${row.map((c) => `${c.station} ${opt(c.cpk, cpk)} (n=${c.n})`).join(', ')}`);
+        }
+      }
+    }
     if (l.stations.length > 1) {
       out.push(`  Stations: ${l.stations.join(', ')}; ${flagged.length} bias flag(s) over ${Math.round(report.biasFlag * 100)}% of half tolerance`);
       for (const b of flagged) {
@@ -77,6 +86,12 @@ export function markdownReport(report: Report): string {
         out.push(`| ${s.station} | ${s.meters} | ${s.firstPassed} | ${yieldText(s.firstPassYieldPct)} |`);
       }
     }
+    if (l.stationCpk.length > 0) {
+      out.push('', '| Point | Station | n | Mean % | SD | Cpk |', '|---|---|--:|--:|--:|--:|');
+      for (const c of l.stationCpk) {
+        out.push(`| ${c.point} | ${c.station} | ${c.n} | ${err(c.mean)} | ${opt(c.stdDev, (v) => v.toFixed(3))} | ${opt(c.cpk, cpk)} |`);
+      }
+    }
     const flagged = l.stationBias.filter((b) => b.flagged);
     if (flagged.length > 0) {
       out.push('', `Station bias flags (over ${Math.round(report.biasFlag * 100)}% of half tolerance):`, '');
@@ -107,6 +122,7 @@ export function jsonReport(report: Report): string {
       finalYieldPct: round(l.finalYieldPct, 2),
       points: l.points.map((p) => ({ ...p, mean: round(p.mean, 6), stdDev: round(p.stdDev, 6), min: round(p.min, 6), max: round(p.max, 6), cpk: round(p.cpk, 3) })),
       stationYield: l.stationYield.map((s) => ({ ...s, firstPassYieldPct: round(s.firstPassYieldPct, 2) })),
+      stationCpk: l.stationCpk.map((c) => ({ ...c, mean: round(c.mean, 6), stdDev: round(c.stdDev, 6), cpk: round(c.cpk, 3) })),
       stationBias: l.stationBias.map((b) => ({ ...b, mean: round(b.mean, 6), bias: round(b.bias, 6), biasOfHalfTolerance: round(b.biasOfHalfTolerance, 4) })),
     })),
   };

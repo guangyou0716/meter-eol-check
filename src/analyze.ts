@@ -37,6 +37,18 @@ export interface StationBias {
   flagged: boolean;
 }
 
+export interface StationCpk {
+  station: string;
+  point: string;
+  /** First attempts on this station at this point. */
+  n: number;
+  mean: number;
+  /** null when n < 2. */
+  stdDev: number | null;
+  /** Same formula as the lot Cpk, from this station's first attempts only; null when n < 2 or zero spread. */
+  cpk: number | null;
+}
+
 export interface StationYield {
   station: string;
   /** Meters whose earliest first attempt ran on this station. */
@@ -79,6 +91,8 @@ export interface LotReport {
   stationBias: StationBias[];
   /** First-pass yield per station (each meter counted at the station of its earliest first attempt); empty for one station. */
   stationYield: StationYield[];
+  /** Cpk per point per station (first attempts); empty for one station. */
+  stationCpk: StationCpk[];
   /** Meters that failed first pass or are incomplete. */
   failedMeters: MeterResult[];
 }
@@ -108,6 +122,15 @@ function failure(limit: PointLimit, attempt: Attempt): FailedPoint | undefined {
 
 const byWorst = (a: FailedPoint, b: FailedPoint) => b.excess - a.excess || a.point.localeCompare(b.point);
 
+/** Mean, sample sd and Cpk of first-attempt errors against a band. */
+function spread(values: number[], lower: number, upper: number): { mean: number; stdDev: number | null; cpk: number | null } {
+  const n = values.length;
+  const mean = values.reduce((s, v) => s + v, 0) / n;
+  const stdDev = n < 2 ? null : Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1));
+  const cpk = stdDev === null || stdDev < 1e-12 ? null : Math.min(upper - mean, mean - lower) / (3 * stdDev);
+  return { mean, stdDev, cpk };
+}
+
 function stats(limit: PointLimit, firsts: Attempt[]): PointStats {
   const values = firsts.map((a) => toNumber(a.error));
   const n = values.length;
@@ -116,9 +139,7 @@ function stats(limit: PointLimit, firsts: Attempt[]): PointStats {
   if (n === 0) {
     return { ...base, mean: null, stdDev: null, min: null, max: null, cpk: null, fails };
   }
-  const mean = values.reduce((s, v) => s + v, 0) / n;
-  const stdDev = n < 2 ? null : Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1));
-  const cpk = stdDev === null || stdDev < 1e-12 ? null : Math.min(base.upper - mean, mean - base.lower) / (3 * stdDev);
+  const { mean, stdDev, cpk } = spread(values, base.lower, base.upper);
   // reduce instead of Math.min(...values): spreading a very large lot would overflow the call stack.
   return { ...base, mean, stdDev, min: values.reduce((m, v) => Math.min(m, v)), max: values.reduce((m, v) => Math.max(m, v)), cpk, fails };
 }
@@ -206,6 +227,20 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
     }
   }
 
+  const stationCpk: StationCpk[] = [];
+  if (stations.length > 1) {
+    for (const limit of limits.points) {
+      const firsts = firstsByPoint.get(limit.point)!;
+      for (const station of stations) {
+        const here = firsts.filter((a) => a.station === station).map((a) => toNumber(a.error));
+        if (here.length === 0) {
+          continue;
+        }
+        stationCpk.push({ station, point: limit.point, n: here.length, ...spread(here, toNumber(limit.lower), toNumber(limit.upper)) });
+      }
+    }
+  }
+
   const stationYield: StationYield[] = [];
   if (stations.length > 1) {
     for (const station of stations) {
@@ -235,6 +270,7 @@ function analyzeLot(lot: string, attempts: Attempt[], limits: Limits, biasFlag: 
     stations,
     stationBias,
     stationYield,
+    stationCpk,
     failedMeters: results.filter((m) => !m.firstPass).sort((a, b) => a.serial.localeCompare(b.serial)),
   };
 }
